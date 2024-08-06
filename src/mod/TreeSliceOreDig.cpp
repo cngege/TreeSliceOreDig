@@ -82,56 +82,56 @@ static auto config = R"(
                 "Chopped_Wood_type":"minecraft:oak_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,4,8],
-                "Check_Leaves_type":"minecraft:leaves",
-                "Check_Leaves_Auxs":[4]
+                "Check_Leaves_type":"minecraft:oak_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:birch_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,2,6,10],
-                "Check_Leaves_type":"minecraft:leaves",
-                "Check_Leaves_Auxs":[2,6]
+                "Check_Leaves_type":"minecraft:birch_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:jungle_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,3,7,11],
-                "Check_Leaves_type":"minecraft:leaves",
-                "Check_Leaves_Auxs":[3,7]
-            },
-            {
-                "Chopped_Wood_type":"minecraft:jungle_log",
-                "Chopped_Wood_Aux": 0,
-                "Covered_Wood_Auxs":[0,3,7,11],
-                "Check_Leaves_type":"minecraft:leaves2",
-                "Check_Leaves_Auxs":[4]
+                "Check_Leaves_type":"minecraft:jungle_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:spruce_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,1,5,9],
-                "Check_Leaves_type":"minecraft:leaves",
-                "Check_Leaves_Auxs":[1,5]
+                "Check_Leaves_type":"minecraft:spruce_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:dark_oak_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,1,5,9],
-                "Check_Leaves_type":"minecraft:leaves2",
-                "Check_Leaves_Auxs":[1,5]
+                "Check_Leaves_type":"minecraft:dark_oak_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:acacia_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,4,8],
-                "Check_Leaves_type":"minecraft:leaves2",
-                "Check_Leaves_Auxs":[0,4]
+                "Check_Leaves_type":"minecraft:acacia_leaves",
+                "Check_Leaves_Auxs":[0]
             },
             {
                 "Chopped_Wood_type":"minecraft:oak_log",
                 "Chopped_Wood_Aux": 0,
                 "Covered_Wood_Auxs":[0,4,8],
                 "Check_Leaves_type":"minecraft:azalea_leaves",
+                "Check_Leaves_Auxs":[0]
+            },
+            {
+                "Chopped_Wood_type":"minecraft:oak_log",
+                "Chopped_Wood_Aux": 0,
+                "Covered_Wood_Auxs":[0,4,8],
+                "Check_Leaves_type":"minecraft:azalea_leaves_flowered",
                 "Check_Leaves_Auxs":[0]
             },
             {
@@ -211,6 +211,11 @@ bool moddisable() {
 
 
 void Block_PlayerDestroy(Block* thi, Player* player, BlockPos* Bpos) {
+    // 插件debug 模式下显示方块信息输出
+    if (0) {
+        my_mod::MyMod::getInstance().getSelf().getLogger().debug("方块名称：{}", thi->getTypeName());
+        my_mod::MyMod::getInstance().getSelf().getLogger().debug("特殊值：{}", Block_getTileData(thi));
+    }
     if (config["Sneak"] == true && !player->isSneaking()) {
         return OBlock_PlayerDestroy(thi, player, Bpos);
     }
@@ -249,7 +254,7 @@ bool CheckUshortArray(json arr, unsigned short val) {
     if (!arr.is_array()) return false;
     for (int i = 0; i < arr.size(); i++) {
         // logger.debug("i:{},arr[i]:{},val:{}", i, arr[i], val);
-        if (arr[i] == val) {
+        if (arr[i] == (int)val) {
             return true;
         }
     }
@@ -258,7 +263,7 @@ bool CheckUshortArray(json arr, unsigned short val) {
 
 Block* Level_getBlock(BlockPos* pos, int dimId) {
     BlockSource* blockSource = const_cast<BlockSource*>(&ll::service::getLevel()->getDimension(dimId).get()->getBlockSourceFromMainChunkSource());
-    return (Block*)&(blockSource->getBlock(*pos));
+    return const_cast<Block*>(&(blockSource->getBlock(*pos)));
 }
 
 bool Level_setBlock(BlockPos pos, int dimId, std::string block, ushort data) {
@@ -279,16 +284,16 @@ bool CheckLeaves(json tree, BlockPos Bpos, int dimid) {
             auto nBpos     = BlockPos(Bpos.x + x, Bpos.y + 1, Bpos.z + z);
             auto block     = Level_getBlock(&nBpos, dimid);
             auto blockname = block->getTypeName();
-            if (blockname == tree["Chopped_Wood_type"]) {
+            if (blockname == std::string(tree["Chopped_Wood_type"])) {
                 auto data = Block_getTileData(block);
                 if (CheckUshortArray(tree["Covered_Wood_Auxs"], data)) { // 如果向上检查的木头是匹配的
                     // if (CheckLeaves(tree, BlockPos(Bpos.x, Bpos.y + 1, Bpos.z), dimid)) {
-                    if (CheckLeaves(tree, BlockPos(nBpos), dimid)) {
+                    if (CheckLeaves(tree, nBpos, dimid)) {
                         return true;
                     }
                 }
             }
-            if (blockname == tree["Check_Leaves_type"]) {
+            if (blockname == std::string(tree["Check_Leaves_type"])) {
                 auto data = Block_getTileData(block);
                 if (CheckUshortArray(tree["Check_Leaves_Auxs"], data)) { // 如果向上检查的树叶是匹配的
                     return true;
@@ -311,12 +316,12 @@ void TreeCutting(json tree, Block* block, Player* player, BlockPos* Bpos) {
                 BlockPos* nBpos  = new BlockPos(Bpos->x + x, Bpos->y + y, Bpos->z + z);
                 Block*    nblock = Level_getBlock(nBpos, player->getDimensionId());
 
-                if (nblock->getTypeName() == tree["Chopped_Wood_type"]) {
+                if (nblock->getTypeName() == std::string(tree["Chopped_Wood_type"])) {
                     if (CheckUshortArray(tree["Covered_Wood_Auxs"], Block_getTileData(nblock))) {
                         TreeCutting(tree, nblock, player, nBpos);
-                        delete nBpos;
                     }
                 }
+                delete nBpos;
             }
         }
     }
