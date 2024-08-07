@@ -1,7 +1,7 @@
 {
     "format_version": 2,
     "tooth": "github.com/cngege/TreeSliceOreDig",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "info": {
         "name": "TreeSliceOreDig",
         "description": "LL3砍树与挖矿",

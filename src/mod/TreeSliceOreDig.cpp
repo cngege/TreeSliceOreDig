@@ -1,26 +1,9 @@
-﻿#include <nlohmann/json.hpp>﻿
-#include <fmt/format.h>
+﻿
+#include <ll/api/service/Bedrock.h>
 #include <functional>
 #include <ll/api/Config.h>
-#include <ll/api/command/Command.h>
-#include <ll/api/command/CommandHandle.h>
-#include <ll/api/command/CommandRegistrar.h>
-#include <ll/api/data/KeyValueDB.h>
-#include <ll/api/event/EventBus.h>
-#include <ll/api/event/ListenerBase.h>
-#include <ll/api/event/player/PlayerJoinEvent.h>
-#include <ll/api/event/player/PlayerUseItemEvent.h>
-#include <ll/api/form/ModalForm.h>
-#include <ll/api/io/FileUtils.h>
-#include <ll/api/mod/NativeMod.h>
-#include <ll/api/mod/ModManagerRegistry.h>
-#include <ll/api/service/Bedrock.h>
-#include <mc/entity/utilities/ActorType.h>
-#include <mc/server/commands/CommandOrigin.h>
-#include <mc/server/commands/CommandOutput.h>
-#include <mc/server/commands/CommandPermissionLevel.h>
+
 #include <mc/world/actor/player/Player.h>
-#include <mc/world/item/registry/ItemStack.h>
 
 #include <mc/world/level/Level.h>
 #include <mc/world/level/block/Block.h>
@@ -33,24 +16,28 @@
 #include <memory>
 #include <stdexcept>
 #include <direct.h>
+#include "Config.h"
 #include "MyMod.h"
 
 #include "ll/api/memory/Hook.h"
 #include "LightHook.h"
 
-using namespace nlohmann;
+my_mod::Config config;
+
+
+//using namespace nlohmann;
 
 using DestroyBlockCALLType = void(__fastcall*)(Block* thi, Player* player, BlockPos* Bpos);
 DestroyBlockCALLType OBlock_PlayerDestroy;
 
 void           Block_PlayerDestroy(Block*, Player*, BlockPos*);
 void           CheckMinerals(Block*, Player*, BlockPos*, std::string, std::string);
-bool           CheckLeaves(json, BlockPos, int);
+bool           CheckLeaves(my_mod::TreeType, BlockPos, int);
 unsigned short Block_getTileData(Block*);
-bool           CheckUshortArray(json, unsigned short);
-void           TreeCutting(json, Block*, Player*, BlockPos*);
+bool           CheckUshortArray(std::list<int>, unsigned short);
+void           TreeCutting(my_mod::TreeType, Block*, Player*, BlockPos*);
 
-
+/*
 std::string configpath = "./plugins/TreeSliceOreDig/";
 
 static auto config = R"(
@@ -158,10 +145,24 @@ static auto config = R"(
          ]
     }
 )"_json;
+*/
 
 HookInformation info;
 
 bool run() {
+    
+    const auto& configFilePath = my_mod::MyMod::getInstance().getSelf().getConfigDir() / "config.json";
+    try {
+        if(!ll::config::loadConfig(config, configFilePath))
+            my_mod::MyMod::getInstance().getSelf().getLogger().warn("读取配置文件 {} 失败，将写入默认配置文件。", configFilePath);
+        if(!ll::config::saveConfig(config, configFilePath)) my_mod::MyMod::getInstance().getSelf().getLogger().error("无法保存默认配置文件至 {}", configFilePath);
+    }
+    catch(...) {
+        my_mod::MyMod::getInstance().getSelf().getLogger().warn("读取配置文件 {} 失败，将写入默认配置文件。", configFilePath);
+        if(!ll::config::saveConfig(config, configFilePath)) my_mod::MyMod::getInstance().getSelf().getLogger().error("无法保存默认配置文件至 {}", configFilePath);
+    }
+    
+    /*
     // 读写配置文件
     if (_access(configpath.c_str(), 0) == -1) // 表示配置文件所在的文件夹不存在
     {
@@ -184,7 +185,7 @@ bool run() {
         c << config.dump(2);
         c.close();
     }
-
+    */
     info = CreateHook((void*)(ll::memory::symbolCache<"?playerDestroy@Block@@QEBAXAEAVPlayer@@AEBVBlockPos@@@Z">), (void*)&Block_PlayerDestroy);
     return true;
 }
@@ -216,17 +217,17 @@ void Block_PlayerDestroy(Block* thi, Player* player, BlockPos* Bpos) {
         my_mod::MyMod::getInstance().getSelf().getLogger().debug("方块名称：{}", thi->getTypeName());
         my_mod::MyMod::getInstance().getSelf().getLogger().debug("特殊值：{}", Block_getTileData(thi));
     }
-    if (config["Sneak"] == true && !player->isSneaking()) {
+    if (config.Sneak == true && !player->isSneaking()) {
         return OBlock_PlayerDestroy(thi, player, Bpos);
     }
     std::string name = thi->getTypeName();
     // 砍树
-    for (auto& tree : config["Tree"]) {
+    for (auto& tree : config.Tree) {
         // 判断砍的是不是配置文件中指定的木头
-        if (tree["Chopped_Wood_type"] == name) {
+        if (tree.Chopped_Wood_type == name) {
             unsigned short aux = Block_getTileData(thi);
             // 检查 砍的是一颗配置文件中 规定的树
-            if (tree["Chopped_Wood_Aux"] == aux) {
+            if (tree.Chopped_Wood_Aux == aux) {
                 if (CheckLeaves(tree, *Bpos, player->getDimensionId())) {
                     return TreeCutting(tree, thi, player, Bpos);
                 }
@@ -235,7 +236,7 @@ void Block_PlayerDestroy(Block* thi, Player* player, BlockPos* Bpos) {
     }
 
     // 检查矿物
-    for (auto& orename : config["Digging"]) {
+    for (auto& orename : config.Digging) {
         if (orename == thi->getTypeName()) {
             if (orename == "minecraft:lit_redstone_ore") {
                 return CheckMinerals(thi, player, Bpos, orename, "minecraft:redstone_ore");
@@ -250,11 +251,9 @@ void Block_PlayerDestroy(Block* thi, Player* player, BlockPos* Bpos) {
 }
 
 
-bool CheckUshortArray(json arr, unsigned short val) {
-    if (!arr.is_array()) return false;
-    for (int i = 0; i < arr.size(); i++) {
-        // logger.debug("i:{},arr[i]:{},val:{}", i, arr[i], val);
-        if (arr[i] == (int)val) {
+bool CheckUshortArray(std::list<int> arr, unsigned short val) {
+    for(int item : arr) {
+        if(item == (int)val) {
             return true;
         }
     }
@@ -276,7 +275,7 @@ bool Level_setBlock(BlockPos pos, int dimId, std::string block, ushort data) {
 }
 
 // 破坏的方块名称特殊值， 位置 维度
-bool CheckLeaves(json tree, BlockPos Bpos, int dimid) {
+bool CheckLeaves(my_mod::TreeType tree, BlockPos Bpos, int dimid) {
     if (Bpos.y > 320) return false; // 建筑高度 320个方块
     //bool CheckLeavesValue = false;
     for (int x = -1; x <= 1; x++) {
@@ -284,18 +283,18 @@ bool CheckLeaves(json tree, BlockPos Bpos, int dimid) {
             auto nBpos     = BlockPos(Bpos.x + x, Bpos.y + 1, Bpos.z + z);
             auto block     = Level_getBlock(&nBpos, dimid);
             auto blockname = block->getTypeName();
-            if (blockname == std::string(tree["Chopped_Wood_type"])) {
+            if (blockname == std::string(tree.Chopped_Wood_type)) {
                 auto data = Block_getTileData(block);
-                if (CheckUshortArray(tree["Covered_Wood_Auxs"], data)) { // 如果向上检查的木头是匹配的
+                if (CheckUshortArray(tree.Covered_Wood_Auxs, data)) { // 如果向上检查的木头是匹配的
                     // if (CheckLeaves(tree, BlockPos(Bpos.x, Bpos.y + 1, Bpos.z), dimid)) {
                     if (CheckLeaves(tree, nBpos, dimid)) {
                         return true;
                     }
                 }
             }
-            if (blockname == std::string(tree["Check_Leaves_type"])) {
+            if (blockname == std::string(tree.Check_Leaves_type)) {
                 auto data = Block_getTileData(block);
-                if (CheckUshortArray(tree["Check_Leaves_Auxs"], data)) { // 如果向上检查的树叶是匹配的
+                if (CheckUshortArray(tree.Check_Leaves_Auxs, data)) { // 如果向上检查的树叶是匹配的
                     return true;
                 }
             }
@@ -305,7 +304,7 @@ bool CheckLeaves(json tree, BlockPos Bpos, int dimid) {
 }
 
 // 正式砍树
-void TreeCutting(json tree, Block* block, Player* player, BlockPos* Bpos) {
+void TreeCutting(my_mod::TreeType tree, Block* block, Player* player, BlockPos* Bpos) {
     if (Bpos->y > 320) return;
     OBlock_PlayerDestroy(block, player, Bpos);
     Level_setBlock(*Bpos, player->getDimensionId(), "minecraft:air", 0);
@@ -316,8 +315,8 @@ void TreeCutting(json tree, Block* block, Player* player, BlockPos* Bpos) {
                 BlockPos* nBpos  = new BlockPos(Bpos->x + x, Bpos->y + y, Bpos->z + z);
                 Block*    nblock = Level_getBlock(nBpos, player->getDimensionId());
 
-                if (nblock->getTypeName() == std::string(tree["Chopped_Wood_type"])) {
-                    if (CheckUshortArray(tree["Covered_Wood_Auxs"], Block_getTileData(nblock))) {
+                if (nblock->getTypeName() == std::string(tree.Chopped_Wood_type)) {
+                    if (CheckUshortArray(tree.Covered_Wood_Auxs, Block_getTileData(nblock))) {
                         TreeCutting(tree, nblock, player, nBpos);
                     }
                 }
